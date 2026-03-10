@@ -91,7 +91,7 @@ def aggregate_by_state(df: pd.DataFrame) -> pd.DataFrame:
     return state_df
 
 
-# ── Plotly choropleth ──────────────────────────────────────────────────────────
+# ── Main map function (geopandas PNG + Plotly HTML) ────────────────────────────
 
 def create_choropleth_map(
     state_df: pd.DataFrame,
@@ -101,101 +101,170 @@ def create_choropleth_map(
     output_path: Path | str | None = None,
 ) -> Any:
     """
-    Create a Plotly choropleth map of Brazil coloured by `column`.
-    Saves as HTML (always) and PNG (if kaleido is available).
-    Returns the plotly Figure.
-    """
-    import plotly.express as px
+    Create a choropleth map of Brazil coloured by `column`.
 
+    Strategy:
+      • PNG (static)  → geopandas + matplotlib  (reliable, publication-quality)
+      • HTML (interactive) → Plotly Express      (hover tooltips)
+
+    Returns the matplotlib Figure.
+    """
     geojson = fetch_brazil_states_geojson()
 
-    # Match on UF sigla (e.g. "MT", "MG") → featureidkey="properties.sigla"
-    hover_cols = {c: True for c in [column] if c in state_df.columns}
-    hover_cols["estado"] = False  # shown via hover_name already
+    # Build GeoDataFrame from the downloaded GeoJSON
+    import geopandas as gpd
+    gdf = gpd.GeoDataFrame.from_features(geojson["features"])
+    # properties.sigla → UF code; align column name with state_df
+    gdf = gdf.rename(columns={"sigla": "estado", "name": "nome_estado"})
+
+    # Merge reproductive data into the GeoDataFrame
+    gdf = gdf.merge(state_df, on="estado", how="left")
+
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # ── PNG via matplotlib/geopandas ──────────────────────────────────────
+        fig = _geopandas_map(gdf, column, title, colorscale, output_path)
+        logger.info("Saved static PNG → %s", output_path)
+
+        # ── HTML via Plotly (interactive) ─────────────────────────────────────
+        try:
+            _plotly_html(state_df, geojson, column, title, colorscale,
+                         output_path.with_suffix(".html"))
+        except Exception as exc:
+            logger.warning("Plotly HTML skipped: %s", exc)
+
+        return fig
+
+    return _geopandas_map(gdf, column, title, colorscale, output_path=None)
+
+
+def _geopandas_map(
+    gdf: Any,
+    column: str,
+    title: str,
+    colorscale: str,
+    output_path: "Path | None",
+) -> Any:
+    """Render a geopandas GeoDataFrame as a matplotlib choropleth PNG."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as mcolors
+    from matplotlib import cm
+
+    # Map colorscale name → matplotlib cmap
+    cmap_map = {
+        "RdYlGn":   "RdYlGn",
+        "RdYlGn_r": "RdYlGn_r",
+        "Reds":     "Reds",
+        "Blues":    "Blues",
+        "YlOrRd":   "YlOrRd",
+    }
+    cmap = cmap_map.get(colorscale, "RdYlGn")
+
+    fig, ax = plt.subplots(figsize=(13, 10), facecolor="white")
+
+    # States with data
+    has_data = gdf[column].notna()
+
+    gdf[has_data].plot(
+        column=column,
+        ax=ax,
+        cmap=cmap,
+        legend=True,
+        legend_kwds={
+            "label": column.replace("_", " ").title(),
+            "orientation": "vertical",
+            "shrink": 0.6,
+            "pad": 0.02,
+        },
+        edgecolor="#FFFFFF",
+        linewidth=0.8,
+        missing_kwds={"color": "#D0D0D0"},
+    )
+    # States without data (grey)
+    gdf[~has_data].plot(ax=ax, color="#D0D0D0", edgecolor="#FFFFFF", linewidth=0.8)
+
+    # State labels
+    for _, row in gdf.iterrows():
+        if row.geometry is None:
+            continue
+        centroid = row.geometry.centroid
+        val = row.get(column)
+        label = row.get("estado", "")
+        if val is not None and not pd.isna(val):
+            val_str = f"{val:.1%}" if val < 2 else f"{val:,.0f}"
+            ax.annotate(
+                f"{label}\n{val_str}",
+                xy=(centroid.x, centroid.y),
+                ha="center", va="center",
+                fontsize=6.5, color="#1a1a1a",
+                fontweight="bold",
+            )
+        else:
+            ax.annotate(label, xy=(centroid.x, centroid.y),
+                        ha="center", va="center", fontsize=6.5, color="#777")
+
+    ax.set_title(title, fontsize=15, fontweight="bold", pad=16, color="#1a3a5c")
+    ax.axis("off")
+    ax.set_facecolor("white")
+
+    # Footer with source
+    fig.text(0.01, 0.01,
+             "Fonte: dados sintéticos calibrados Embrapa/CNA  |  Fronteiras: IBGE",
+             fontsize=7.5, color="#888", style="italic")
+
+    fig.tight_layout()
+
+    if output_path is not None:
+        fig.savefig(str(output_path), dpi=150, bbox_inches="tight",
+                    facecolor="white")
+        plt.close(fig)
+
+    return fig
+
+
+def _plotly_html(
+    state_df: pd.DataFrame,
+    geojson: dict,
+    column: str,
+    title: str,
+    colorscale: str,
+    html_path: "Path",
+) -> None:
+    """Save an interactive Plotly choropleth as HTML."""
+    import plotly.express as px
 
     fig = px.choropleth(
         state_df,
         geojson=geojson,
-        locations="estado",              # UF column in state_df
-        featureidkey="properties.sigla", # GeoJSON property with UF code
+        locations="estado",
+        featureidkey="properties.sigla",
         color=column,
         color_continuous_scale=colorscale,
         hover_name="estado",
-        hover_data=hover_cols,
         title=title,
         scope="south america",
     )
-    fig.update_geos(
-        fitbounds="locations",
-        visible=False,
-        showframe=False,
-        bgcolor="rgba(0,0,0,0)",
-    )
+    fig.update_geos(fitbounds="locations", visible=False)
     fig.update_layout(
         margin={"r": 20, "t": 60, "l": 20, "b": 20},
         paper_bgcolor="white",
-        font=dict(family="Arial", size=12),
-        title_font=dict(size=16, color="#1a3a5c"),
-        coloraxis_colorbar=dict(
-            title=column.replace("_", " ").title(),
-            thickness=15,
-        ),
     )
-
-    if output_path is not None:
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Save HTML
-        html_path = output_path.with_suffix(".html")
-        fig.write_html(str(html_path))
-        logger.info("Saved choropleth HTML → %s", html_path)
-
-        # Save PNG (requires kaleido)
-        try:
-            fig.write_image(str(output_path))
-            logger.info("Saved choropleth PNG → %s", output_path)
-        except Exception as exc:
-            logger.warning("Could not save PNG (kaleido issue?): %s", exc)
-
-    return fig
+    fig.write_html(str(html_path))
+    logger.info("Saved interactive HTML → %s", html_path)
 
 
-# ── Static matplotlib/geopandas map ───────────────────────────────────────────
+# ── Convenience alias ──────────────────────────────────────────────────────────
 
 def create_static_map(
-    gdf: Any,  # GeoDataFrame
+    gdf: Any,
     column: str,
     title: str,
-    output_path: Path | str | None = None,
+    output_path: "Path | str | None" = None,
 ) -> Any:
-    """
-    Create a static choropleth map using geopandas + matplotlib.
-    `gdf` must be a GeoDataFrame with a `column` to colour by.
-    Returns the matplotlib Figure.
-    """
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
-    gdf.plot(
-        column=column,
-        ax=ax,
-        legend=True,
-        cmap="RdYlGn",
-        missing_kwds={"color": "#CCCCCC", "label": "Sem dados"},
-        edgecolor="white",
-        linewidth=0.5,
-    )
-    ax.set_title(title, fontsize=14, fontweight="bold", pad=12)
-    ax.axis("off")
-    fig.tight_layout()
-
-    if output_path is not None:
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(str(output_path), dpi=150, bbox_inches="tight")
-        logger.info("Saved static map → %s", output_path)
-
-    return fig
+    """Thin wrapper kept for backwards compatibility."""
+    return _geopandas_map(gdf, column, title, "RdYlGn",
+                          Path(output_path) if output_path else None)
