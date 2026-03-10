@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Data — não versionar dados brutos nem processados intermediários
+data/raw/
+data/processed/
+
+# Relatórios HTML (gerados automaticamente)
+outputs/reports/
+
+# Modelos (gerados automaticamente)
+outputs/models/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+*.swp
