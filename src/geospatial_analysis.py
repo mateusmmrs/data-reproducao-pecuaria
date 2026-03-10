@@ -26,9 +26,11 @@ UF_TO_CODE: dict[str, str] = {
     "GO": "52", "DF": "53",
 }
 
-IBGE_GEOJSON_URL = (
-    "https://servicodados.ibge.gov.br/api/v3/malhas/paises/BR"
-    "?resolucao=2&formato=application/vnd.geo+json"
+# GeoJSON with all 27 Brazilian states (properties: sigla, name, codigo_ibg)
+# Source: click_that_hood / IBGE — verified working, 27 features
+BRAZIL_STATES_GEOJSON_URL = (
+    "https://raw.githubusercontent.com/codeforamerica/click_that_hood"
+    "/master/public/data/brazil-states.geojson"
 )
 
 
@@ -36,15 +38,19 @@ IBGE_GEOJSON_URL = (
 
 def fetch_brazil_states_geojson() -> dict:
     """
-    Fetch Brazilian state boundaries from the IBGE GeoJSON API.
-    Returns a GeoJSON dict.  On failure raises an exception.
+    Fetch Brazilian state boundaries (27 states, one feature each).
+    Properties per feature: sigla (UF), name, codigo_ibg (IBGE numeric code).
+    Returns a GeoJSON FeatureCollection dict.
     """
     import requests
 
-    logger.info("Fetching Brazil states GeoJSON from IBGE …")
-    resp = requests.get(IBGE_GEOJSON_URL, timeout=30)
+    logger.info("Fetching Brazil states GeoJSON …")
+    resp = requests.get(BRAZIL_STATES_GEOJSON_URL, timeout=30)
     resp.raise_for_status()
-    return resp.json()
+    geojson = resp.json()
+    n = len(geojson.get("features", []))
+    logger.info("Loaded %d state features", n)
+    return geojson
 
 
 # ── Data aggregation ───────────────────────────────────────────────────────────
@@ -103,21 +109,37 @@ def create_choropleth_map(
 
     geojson = fetch_brazil_states_geojson()
 
+    # Match on UF sigla (e.g. "MT", "MG") → featureidkey="properties.sigla"
+    hover_cols = {c: True for c in [column] if c in state_df.columns}
+    hover_cols["estado"] = False  # shown via hover_name already
+
     fig = px.choropleth(
         state_df,
         geojson=geojson,
-        locations="codarea",
-        featureidkey="properties.codarea",
+        locations="estado",              # UF column in state_df
+        featureidkey="properties.sigla", # GeoJSON property with UF code
         color=column,
         color_continuous_scale=colorscale,
         hover_name="estado",
-        hover_data={"codarea": False, column: True},
+        hover_data=hover_cols,
         title=title,
+        scope="south america",
     )
-    fig.update_geos(fitbounds="locations", visible=False)
+    fig.update_geos(
+        fitbounds="locations",
+        visible=False,
+        showframe=False,
+        bgcolor="rgba(0,0,0,0)",
+    )
     fig.update_layout(
-        margin={"r": 0, "t": 50, "l": 0, "b": 0},
-        coloraxis_colorbar=dict(title=column.replace("_", " ").title()),
+        margin={"r": 20, "t": 60, "l": 20, "b": 20},
+        paper_bgcolor="white",
+        font=dict(family="Arial", size=12),
+        title_font=dict(size=16, color="#1a3a5c"),
+        coloraxis_colorbar=dict(
+            title=column.replace("_", " ").title(),
+            thickness=15,
+        ),
     )
 
     if output_path is not None:
