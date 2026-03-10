@@ -22,6 +22,7 @@ from agents import (
     DataEngineerAgent,
     DataQualityAgent,
     EDAAgent,
+    GeospatialAgent,
     HypothesisAgent,
     ModelingAgent,
     EconomicImpactAgent,
@@ -35,6 +36,7 @@ PIPELINE: list = [
     DataEngineerAgent,
     DataQualityAgent,
     EDAAgent,
+    GeospatialAgent,
     HypothesisAgent,
     ModelingAgent,
     EconomicImpactAgent,
@@ -60,6 +62,23 @@ def run_pipeline(context: dict[str, Any] | None = None) -> dict[str, Any]:
     t0 = time.perf_counter()
     timings: dict[str, float] = {}
 
+    # Pre-populate reproductive strategy simulation (standalone, not an agent)
+    try:
+        from src.reproductive_strategy_simulator import simulate_scenarios
+        eda_kpis = context.get("eda", {}).get("kpis", {})
+        sim_result = simulate_scenarios(
+            herd_size=context.get("herd_size", 500),
+            ecc_mean=float(eda_kpis.get("ecc_medio", 2.9)),
+            days_open=float(eda_kpis.get("dias_abertos_medio", 130.0)),
+            calf_value=float(
+                context.get("econ_params", {}).get("valor_bezerro", 1800.0)
+            ),
+        )
+        context["iatf_simulation"] = sim_result
+    except Exception as _sim_exc:
+        log_step("IATF Simulator", f"Skipped — {_sim_exc}")
+        context.setdefault("iatf_simulation", {})
+
     for AgentClass in PIPELINE:
         agent = AgentClass()
         t_start = time.perf_counter()
@@ -81,6 +100,14 @@ def run_pipeline(context: dict[str, Any] | None = None) -> dict[str, Any]:
     print(f"    Relatório HTML   → {context.get('report_path', 'N/A')}")
     print(f"    Gráficos         → {ROOT / 'outputs' / 'plots'}")
     print(f"    Modelos          → {ROOT / 'outputs' / 'models'}")
+    print(f"    Mapas            → {ROOT / 'outputs' / 'maps'}")
+    geo = context.get("geospatial", {})
+    if geo.get("maps"):
+        for m in geo["maps"]:
+            print(f"      → {m}")
+    iatf = context.get("iatf_simulation", {})
+    if iatf:
+        print(f"    Simulação IATF   → armazenada em context['iatf_simulation']")
     print(f"\n{'═' * 70}\n")
 
     return context

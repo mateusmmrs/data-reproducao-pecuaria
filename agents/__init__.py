@@ -2,6 +2,7 @@ from .base_agent import BaseAgent
 from .data_engineer import DataEngineerAgent
 from .data_quality import DataQualityAgent
 from .eda_agent import EDAAgent
+from .geospatial_agent import GeospatialAgent
 from .hypothesis_agent import HypothesisAgent
 from .modeling_agent import ModelingAgent
 from .economic_impact_agent import EconomicImpactAgent

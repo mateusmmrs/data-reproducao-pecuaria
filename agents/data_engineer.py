@@ -101,6 +101,11 @@ COLUMN_MAP: dict[str, str] = {
     "tecnico": "tecnico",
     "technician": "tecnico",
     "inseminador": "tecnico",
+    # State (UF)
+    "estado": "estado",
+    "uf": "estado",
+    "state": "estado",
+    "estado_uf": "estado",
     # Municipality (IBGE code or name)
     "municipio": "municipio",
     "município": "municipio",
@@ -256,6 +261,10 @@ class DataEngineerAgent(BaseAgent):
         tecnicos = rng.choice(["Ana", "Bruno", "Carla", "Diego", "Elisa"], n)
         fazendas = rng.choice(["Fazenda Esperança", "Sítio Bela Vista", "Rancho do Sul",
                                "Agropecuária Norte", "Estância Central"], n)
+        estados = rng.choice(
+            ["MT", "MG", "GO", "MS", "PA", "BA", "RS", "PR", "SP", "RO"],
+            n, p=[0.14, 0.12, 0.11, 0.09, 0.08, 0.08, 0.07, 0.06, 0.05, 0.20],
+        )
 
         # Pregnancy probability influenced by ECC and parity
         logit = (
@@ -282,6 +291,7 @@ class DataEngineerAgent(BaseAgent):
         df = pd.DataFrame({
             "id_animal":        [f"A{i:05d}" for i in range(1, n + 1)],
             "fazenda":          fazendas,
+            "estado":           estados,
             "raca":             racas,
             "ordem_parto":      paridade,
             "ecc":              ecc,

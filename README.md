@@ -190,5 +190,123 @@ Para habilitar o enriquecimento IBGE, inclua `municipio` com o **código IBGE de
 | `data/processed/eda_results.json` | KPIs, correlações, análise municipal IBGE |
 | `data/processed/economic_impact.json` | Cálculos com preços BCB/IPEADATA |
 | `outputs/models/model_results.json` | Métricas e importância de variáveis |
-| `outputs/plots/*.png` | 10 gráficos (acima) |
+| `outputs/plots/*.png` | 13 gráficos (acima) |
 | `outputs/reports/relatorio_reprodutivo.html` | Relatório interativo completo |
+| `outputs/maps/*.png` | 3 mapas coropléticos do Brasil por estado |
+| `outputs/maps/*.html` | Versão interativa (hover) dos mapas Plotly |
+
+---
+
+## Novas funcionalidades
+
+### Análise Geoespacial
+
+O `GeospatialAgent` (inserido após o `EDAAgent` no pipeline) gera três mapas coropléticos do Brasil coloridos por indicador reprodutivo, salvos em `outputs/maps/`:
+
+| Mapa | Indicador |
+|------|-----------|
+| `mapa_01_taxa_concepcao_por_estado.png` | Taxa de concepção média por estado |
+| `mapa_02_dias_abertos_por_estado.png` | Dias abertos médios por estado |
+| `mapa_03_perda_economica_por_estado.png` | Perda econômica estimada por estado |
+
+Os mapas usam a API GeoJSON do IBGE (`servicodados.ibge.gov.br`) para as fronteiras estaduais.  Se a API estiver indisponível ou o geopandas não estiver instalado, o agente faz fallback para gráficos de barras simples sem interromper o pipeline.
+
+O dataset sintético inclui a coluna `estado` com distribuição proporcional ao rebanho bovino nacional (MT 14%, MG 12%, GO 11%, MS 9%, PA 8%, BA 8%, RS 7%, PR 6%, SP 5%, outros 20%).
+
+### Dashboard Interativo (Streamlit)
+
+```bash
+streamlit run dashboard/app.py
+```
+
+O dashboard funciona de forma independente (sem necessidade de executar o pipeline antes).  Quatro abas:
+
+- **Indicadores** — KPIs principais: prenhezes esperadas, bezerros/ano, perda por dias abertos, custo/prenhez
+- **Impacto Econômico** — Comparativo gráfico: perda atual vs ganho potencial vs investimento em IA
+- **Simulador IATF** — Tabela e gráficos comparando protocolo convencional vs IATF, com recomendação automática
+- **Benchmarks** — Barra de progresso mostrando posição do rebanho vs metas Embrapa / CNA / ABIEC
+
+### Simulador IATF
+
+O módulo `src/reproductive_strategy_simulator.py` implementa a classe `IATFSimulator` para comparação econômica de protocolos:
+
+```python
+from src.reproductive_strategy_simulator import IATFSimulator, simulate_scenarios
+
+sim = IATFSimulator(herd_size=500, base_conception_rate=0.55, calf_value=1800)
+comparison = sim.compare()
+roi = sim.roi_analysis()
+
+# Ou versão simplificada para o dashboard:
+result = simulate_scenarios(herd_size=500, ecc_mean=2.9, days_open=130)
+```
+
+Parâmetros calculados por protocolo: prenhezes esperadas, custo por animal, custo total, custo por prenhez, receita bruta, retorno líquido, ROI (%).
+
+### KPIs Reprodutivos Expandidos
+
+O `EDAAgent` agora calcula KPIs adicionais além dos originais:
+
+| KPI | Descrição | Fórmula |
+|-----|-----------|---------|
+| `pregnancy_rate` | Taxa de prenhez rigorosa | prenhes / total exposto |
+| `total_pregnant` | Total de prenhes confirmadas | soma prenhe=1 |
+| `total_exposed` | Total de vacas expostas | len(df) |
+| `spc_em_prenhes` | SPC das vacas que conceberam | média de servicos_concepcao em prenhe=1 |
+| `spc_global` | SPC global do rebanho | total IA / total prenhes |
+| `taxa_paricao_no_alvo` | % vacas com IEP ≤ 365 dias | (IEP≤365).sum() / n |
+
+O método `_advanced_group_analysis` adiciona análise de SPC e taxa de parição agrupados por fazenda e técnico.
+
+### Novos Gráficos (11-13)
+
+---
+
+#### 11 · Taxa de Prenhez Detalhada
+**O que mostra:** prenhez por fazenda (barras) e evolução mês a mês das IAs (linha).
+**Para que serve:** identificar sazonalidade e comparar fazendas lado a lado vs meta Embrapa.
+
+![Taxa de Prenhez Detalhada](outputs/plots/11_taxa_prenhez_detalhada.png)
+
+---
+
+#### 12 · SPC por Fazenda e Técnico
+**O que mostra:** Serviços por Concepção (SPC) com semáforo de cores — verde < 1,5 · amarelo 1,5–2,0 · vermelho > 2,0.
+**Para que serve:** identificar ineficiências na IA por fazenda ou por técnico; SPC alto = custo de sêmen e mão-de-obra desperdiçados.
+
+![SPC por Grupo](outputs/plots/12_spc_por_grupo.png)
+
+---
+
+#### 13 · Taxa de Parição no Alvo
+**O que mostra:** % de vacas com IEP ≤ 365 dias (1 bezerra/vaca/ano) por fazenda ou por ano.
+**Para que serve:** o indicador mais direto de eficiência do sistema reprodutivo — maximizar a % de vacas parindo dentro do ano.
+
+![Taxa de Parição](outputs/plots/13_taxa_paricao_tendencia.png)
+
+---
+
+### Mapas Geoespaciais
+
+Os 3 mapas coropléticos do Brasil são gerados automaticamente pelo `GeospatialAgent` usando a API GeoJSON oficial do IBGE. Versões interativas (hover) salvas como `.html`.
+
+---
+
+#### Mapa 1 · Taxa de Concepção por Estado
+**Escala:** vermelho (baixa) → amarelo → verde (alta) | Fonte: IBGE GeoJSON + dados do rebanho
+
+![Mapa Taxa de Concepção](outputs/maps/mapa_01_taxa_concepcao_por_estado.png)
+
+---
+
+#### Mapa 2 · Dias Abertos Médios por Estado
+**Escala:** verde (próximo da meta) → vermelho (excesso de dias abertos) | Meta CNA: 110 dias
+
+![Mapa Dias Abertos](outputs/maps/mapa_02_dias_abertos_por_estado.png)
+
+---
+
+#### Mapa 3 · Perda Econômica por Estado
+**Escala:** branco → vermelho intenso (maior perda estimada em R$) | Derivado dos dias abertos × custo/dia × rebanho
+
+![Mapa Perda Econômica](outputs/maps/mapa_03_perda_economica_por_estado.png)

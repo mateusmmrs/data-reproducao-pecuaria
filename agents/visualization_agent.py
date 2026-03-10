@@ -111,6 +111,15 @@ class VisualizationAgent(BaseAgent):
         section("10. Season vs Key Metrics")
         saved_plots += self._season_metrics(df)
 
+        section("11. Pregnancy Rate Distribution")
+        saved_plots += self._pregnancy_rate_chart(df, eda)
+
+        section("12. SPC by Farm and Technician")
+        saved_plots += self._spc_by_group(df)
+
+        section("13. Calving Rate Trend")
+        saved_plots += self._calving_rate_trend(df)
+
         context["plots"] = saved_plots
         return context
 
@@ -680,6 +689,206 @@ class VisualizationAgent(BaseAgent):
         _add_source(fig)
         _save(fig, "10_metricas_por_estacao.png")
         plots.append("10_metricas_por_estacao.png")
+        return plots
+
+    # ── new chart methods (charts 11-13) ──────────────────────────────────────
+
+    def _pregnancy_rate_chart(self, df: pd.DataFrame, eda: dict) -> list[str]:
+        """Chart 11: Pregnancy rate distribution by month or farm."""
+        plots = []
+        if "prenhe" not in df.columns:
+            return plots
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        # Left: by farm
+        ax = axes[0]
+        if "fazenda" in df.columns:
+            grp = df.groupby("fazenda")["prenhe"].agg(["mean", "count"]).reset_index()
+            grp["mean"] *= 100
+            grp = grp.sort_values("mean", ascending=False)
+            colors = ["#27AE60" if v >= 60 else "#F39C12" if v >= 55 else "#E74C3C"
+                      for v in grp["mean"]]
+            bars = ax.bar(grp["fazenda"], grp["mean"], color=colors, edgecolor="white")
+            ax.axhline(BENCH["taxa_concepcao_alvo"] * 100, color="#27AE60", lw=1.5, ls=":",
+                       label="Meta Embrapa: 60%")
+            ax.axhline(BENCH["taxa_concepcao_media"] * 100, color="#F39C12", lw=1.2, ls="--",
+                       label="Média nacional: 55%")
+            ax.set_ylabel("Taxa de Prenhez (%)")
+            ax.set_title("Taxa de Prenhez por Fazenda", fontweight="bold")
+            ax.set_ylim(0, 105)
+            ax.tick_params(axis="x", rotation=25)
+            for bar, val in zip(bars, grp["mean"]):
+                ax.text(bar.get_x() + bar.get_width() / 2, val + 1.2,
+                        f"{val:.1f}%", ha="center", fontsize=8.5, fontweight="bold")
+            ax.legend(fontsize=8)
+        else:
+            ax.set_visible(False)
+
+        # Right: by month (if date available)
+        ax2 = axes[1]
+        if "data_inseminacao" in df.columns:
+            df2 = df.copy()
+            df2["mes"] = pd.to_datetime(df2["data_inseminacao"], errors="coerce").dt.month
+            grp2 = df2.groupby("mes")["prenhe"].agg(["mean", "count"]).reset_index()
+            grp2["mean"] *= 100
+            month_names = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
+                           7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"}
+            grp2["mes_nome"] = grp2["mes"].map(month_names)
+            ax2.plot(grp2["mes_nome"], grp2["mean"], "o-", color="#2980B9", lw=2.5, markersize=7)
+            ax2.axhline(BENCH["taxa_concepcao_alvo"] * 100, color="#27AE60", lw=1.5, ls=":",
+                        label="Meta Embrapa: 60%")
+            ax2.set_ylabel("Taxa de Prenhez (%)")
+            ax2.set_title("Taxa de Prenhez por Mês de IA", fontweight="bold")
+            ax2.set_ylim(0, 100)
+            ax2.tick_params(axis="x", rotation=35)
+            ax2.legend(fontsize=8)
+        else:
+            ax2.set_visible(False)
+
+        fig.suptitle(
+            "Distribuição Detalhada da Taxa de Prenhez\n"
+            "Verde ≥ 60% (meta Embrapa) · Amarelo 55-60% · Vermelho < 55%",
+            fontsize=13, fontweight="bold",
+        )
+        fig.tight_layout()
+        _add_source(fig)
+        _save(fig, "11_taxa_prenhez_detalhada.png")
+        plots.append("11_taxa_prenhez_detalhada.png")
+        return plots
+
+    def _spc_by_group(self, df: pd.DataFrame) -> list[str]:
+        """Chart 12: SPC by farm and technician with traffic-light colouring."""
+        plots = []
+        if "servicos_concepcao" not in df.columns:
+            return plots
+
+        group_cols = [c for c in ("fazenda", "tecnico") if c in df.columns]
+        if not group_cols:
+            return plots
+
+        fig, axes = plt.subplots(1, len(group_cols), figsize=(8 * len(group_cols), 5))
+        if len(group_cols) == 1:
+            axes = [axes]
+
+        for ax, col in zip(axes, group_cols):
+            if "prenhe" in df.columns:
+                grp = df.groupby(col, observed=True).apply(
+                    lambda x: (
+                        x["servicos_concepcao"].sum() / max(int(x["prenhe"].sum()), 1)
+                    )
+                ).reset_index()
+                grp.columns = [col, "spc"]
+            else:
+                grp = df.groupby(col, observed=True)["servicos_concepcao"].mean().reset_index()
+                grp.columns = [col, "spc"]
+
+            grp = grp.sort_values("spc")
+            colors = []
+            for v in grp["spc"]:
+                if v < 1.5:
+                    colors.append("#27AE60")  # green — good
+                elif v < 2.0:
+                    colors.append("#F39C12")  # yellow — acceptable
+                else:
+                    colors.append("#E74C3C")  # red — alert
+
+            bars = ax.barh(grp[col].astype(str), grp["spc"], color=colors, edgecolor="white")
+            ax.axvline(1.0, color="#27AE60", lw=1.5, ls=":", label="Ideal: SPC=1.0")
+            ax.axvline(1.5, color="#F39C12", lw=1.2, ls="--", label="Aceitável: SPC=1.5")
+            ax.axvline(2.0, color="#E74C3C", lw=1.2, ls="-.", label="Alerta: SPC=2.0")
+            ax.set_title(
+                f"SPC por {col.replace('_', ' ').title()}\n"
+                "Verde<1.5 · Amarelo 1.5-2.0 · Vermelho>2.0",
+                fontweight="bold",
+            )
+            ax.set_xlabel("Serviços por Concepção (SPC)")
+            for bar, (_, row) in zip(bars, grp.iterrows()):
+                ax.text(bar.get_width() + 0.02, bar.get_y() + bar.get_height() / 2,
+                        f"{row['spc']:.2f}", va="center", fontsize=8.5)
+            ax.legend(fontsize=7.5, loc="lower right")
+            ax.set_xlim(0, max(grp["spc"].max() * 1.2, 2.5))
+
+        fig.suptitle(
+            "Serviços por Concepção (SPC) — Eficiência Reprodutiva por Grupo\n"
+            "Menor SPC = maior eficiência; SPC=1 significa concepção na 1ª IA",
+            fontsize=13, fontweight="bold",
+        )
+        fig.tight_layout()
+        _add_source(fig)
+        _save(fig, "12_spc_por_grupo.png")
+        plots.append("12_spc_por_grupo.png")
+        return plots
+
+    def _calving_rate_trend(self, df: pd.DataFrame) -> list[str]:
+        """Chart 13: % cows with IEP <= 365 days, by year or farm."""
+        plots = []
+        if "iep" not in df.columns:
+            return plots
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+
+        if "ano" in df.columns and df["ano"].nunique() >= 2:
+            grp = (
+                df.groupby("ano", observed=True)
+                .apply(lambda x: (x["iep"] <= 365).mean())
+                .reset_index()
+            )
+            grp.columns = ["ano", "taxa_paricao"]
+            grp["taxa_paricao"] *= 100
+            ax.plot(grp["ano"], grp["taxa_paricao"], "o-",
+                    color="#2980B9", lw=2.5, markersize=8, label="% IEP ≤ 365 d")
+            ax.fill_between(grp["ano"], 0, grp["taxa_paricao"], alpha=0.12, color="#2980B9")
+            ax.set_xlabel("Ano")
+            ax.set_title(
+                "Tendência da Taxa de Parição no Alvo (IEP ≤ 365 d) por Ano\n"
+                "Meta: maximizar % de vacas com intervalo parto-parto ≤ 1 ano",
+                fontweight="bold",
+            )
+            for _, row in grp.iterrows():
+                ax.text(row["ano"], row["taxa_paricao"] + 1.2,
+                        f"{row['taxa_paricao']:.1f}%", ha="center", fontsize=8)
+        elif "fazenda" in df.columns:
+            grp = (
+                df.groupby("fazenda", observed=True)
+                .apply(lambda x: (x["iep"] <= 365).mean())
+                .reset_index()
+            )
+            grp.columns = ["fazenda", "taxa_paricao"]
+            grp["taxa_paricao"] *= 100
+            grp = grp.sort_values("taxa_paricao", ascending=True)
+            colors = ["#27AE60" if v >= 60 else "#F39C12" if v >= 40 else "#E74C3C"
+                      for v in grp["taxa_paricao"]]
+            bars = ax.barh(grp["fazenda"], grp["taxa_paricao"], color=colors, edgecolor="white")
+            ax.set_xlabel("% Vacas com IEP ≤ 365 d")
+            ax.set_title(
+                "Taxa de Parição no Alvo (IEP ≤ 365 d) por Fazenda\n"
+                "Meta: maximizar % de vacas com intervalo parto-parto ≤ 1 ano",
+                fontweight="bold",
+            )
+            for bar, val in zip(bars, grp["taxa_paricao"]):
+                ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height() / 2,
+                        f"{val:.1f}%", va="center", fontsize=8.5)
+        else:
+            on_target = (df["iep"] <= 365).mean() * 100
+            ax.bar(["Rebanho Total"], [on_target], color="#3498DB", edgecolor="white")
+            ax.set_title("Taxa de Parição no Alvo (IEP ≤ 365 d)", fontweight="bold")
+            ax.set_ylabel("% Vacas com IEP ≤ 365 d")
+
+        ax.axhline(60, color="#27AE60", lw=1.5, ls=":", label="Meta referência: 60%")
+        ax.set_ylabel("% Vacas com IEP ≤ 365 d") if "ano" in df.columns else None
+        ax.set_ylim(0, 105)
+        ax.legend(fontsize=8)
+
+        fig.suptitle(
+            "Taxa de Parição no Alvo — Indicador de Eficiência do Sistema Reprodutivo\n"
+            "IEP ≤ 365 dias = 1 bezerra/vaca/ano (meta ideal da exploração bovina)",
+            fontsize=13, fontweight="bold",
+        )
+        fig.tight_layout()
+        _add_source(fig)
+        _save(fig, "13_taxa_paricao_tendencia.png")
+        plots.append("13_taxa_paricao_tendencia.png")
         return plots
 
     def _summarize(self, context: dict[str, Any]) -> None:

@@ -47,6 +47,9 @@ class EDAAgent(BaseAgent):
         section("Municipal Analysis — IBGE SIDRA")
         eda["municipal"] = self._municipal_analysis(df)
 
+        section("Advanced Group Analysis — SPC & Calving Rate")
+        eda["advanced_groups"] = self._advanced_group_analysis(df)
+
         save_json(eda, DATA_PROCESSED / "eda_results.json")
         context["eda"] = eda
         return context
@@ -96,6 +99,34 @@ class EDAAgent(BaseAgent):
             milk = df["producao_leite_kg"].mean()
             kpis["producao_leite_media_kg"] = round(float(milk), 1)
             print(f"  Produção de leite (média)        : {milk:.1f} kg/dia")
+
+        # Pregnancy Rate (rigorosa: prenhes / vacas elegíveis expostas)
+        if "prenhe" in df.columns:
+            total_exposed = len(df)
+            total_pregnant = int(df["prenhe"].sum())
+            pregnancy_rate = total_pregnant / total_exposed if total_exposed > 0 else 0
+            kpis["pregnancy_rate"] = round(float(pregnancy_rate), 4)
+            kpis["total_pregnant"] = total_pregnant
+            kpis["total_exposed"] = total_exposed
+            print(f"  Prenhezes confirmadas           : {total_pregnant}/{total_exposed} ({pregnancy_rate:.1%})")
+
+        # Services per Conception (SPC rigoroso)
+        if "servicos_concepcao" in df.columns and "prenhe" in df.columns:
+            pregnant_df = df[df["prenhe"] == 1]
+            spc_pregnant = pregnant_df["servicos_concepcao"].mean() if len(pregnant_df) > 0 else None
+            kpis["spc_em_prenhes"] = round(float(spc_pregnant), 2) if spc_pregnant is not None else None
+            total_services = df["servicos_concepcao"].sum()
+            spc_global = total_services / total_pregnant if total_pregnant > 0 else None
+            kpis["spc_global"] = round(float(spc_global), 2) if spc_global is not None else None
+            print(f"  SPC global (total IA/prenhes)   : {spc_global:.2f}" if spc_global else "  SPC global: N/A")
+
+        # Calving Rate (estimado: assume gestação de 283d, IEP disponível)
+        if "iep" in df.columns and "prenhe" in df.columns:
+            # Calving rate = % of cows that completed a full calving cycle within IEP target
+            on_target = (df["iep"] <= 365).sum() if "iep" in df.columns else 0
+            calving_rate = on_target / len(df) if len(df) > 0 else 0
+            kpis["taxa_paricao_no_alvo"] = round(float(calving_rate), 4)
+            print(f"  Taxa de parição no alvo (IEP≤365d): {calving_rate:.1%}")
 
         return kpis
 
@@ -206,6 +237,56 @@ class EDAAgent(BaseAgent):
         result["municipios"] = municipal_rows
         result["fonte"] = "IBGE SIDRA / PPM"
         result["data_source"] = "https://sidra.ibge.gov.br"
+        return result
+
+    def _advanced_group_analysis(self, df: pd.DataFrame) -> dict:
+        """
+        Group-level SPC (services per conception) and calving rate analysis
+        by farm and technician.
+        """
+        result: dict[str, Any] = {}
+        group_cols = [c for c in ("fazenda", "tecnico") if c in df.columns]
+
+        for col in group_cols:
+            rows = []
+            for group_val, sub in df.groupby(col, observed=True):
+                # SPC
+                spc = None
+                if "servicos_concepcao" in sub.columns:
+                    pregnant = sub[sub["prenhe"] == 1] if "prenhe" in sub.columns else sub
+                    total_svc = sub["servicos_concepcao"].sum()
+                    n_preg = int(pregnant["prenhe"].sum()) if "prenhe" in sub.columns else len(pregnant)
+                    spc = round(float(total_svc / n_preg), 2) if n_preg > 0 else None
+
+                # Calving rate on target
+                calving_rate_on_target = None
+                if "iep" in sub.columns:
+                    on_target = (sub["iep"] <= 365).sum()
+                    calving_rate_on_target = round(float(on_target / len(sub)), 4) if len(sub) > 0 else None
+
+                # Conception rate
+                cr = round(float(sub["prenhe"].mean()), 4) if "prenhe" in sub.columns else None
+
+                rows.append({
+                    "grupo": str(group_val),
+                    "n": len(sub),
+                    "taxa_concepcao": cr,
+                    "spc_global": spc,
+                    "taxa_paricao_no_alvo": calving_rate_on_target,
+                })
+
+            result[col] = rows
+            print(f"\n  SPC e Taxa de Parição por {col}:")
+            for r in rows:
+                spc_str = f"SPC={r['spc_global']:.2f}" if r["spc_global"] else "SPC=N/A"
+                cr_str = f"CR={r['taxa_concepcao']:.1%}" if r["taxa_concepcao"] is not None else "CR=N/A"
+                calv_str = (
+                    f"Parição={r['taxa_paricao_no_alvo']:.1%}"
+                    if r["taxa_paricao_no_alvo"] is not None
+                    else "Parição=N/A"
+                )
+                print(f"    {str(r['grupo']):30s}  n={r['n']:4d}  {cr_str}  {spc_str}  {calv_str}")
+
         return result
 
     def _summarize(self, context: dict[str, Any]) -> None:

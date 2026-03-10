@@ -94,6 +94,7 @@ DATA_PROCESSED = ROOT / "data" / "processed"
 OUTPUTS_REPORTS = ROOT / "outputs" / "reports"
 OUTPUTS_PLOTS = ROOT / "outputs" / "plots"
 OUTPUTS_MODELS = ROOT / "outputs" / "models"
+OUTPUTS_MAPS = ROOT / "outputs" / "maps"
 
-for _p in (DATA_RAW, DATA_PROCESSED, OUTPUTS_REPORTS, OUTPUTS_PLOTS, OUTPUTS_MODELS):
+for _p in (DATA_RAW, DATA_PROCESSED, OUTPUTS_REPORTS, OUTPUTS_PLOTS, OUTPUTS_MODELS, OUTPUTS_MAPS):
     _p.mkdir(parents=True, exist_ok=True)
