@@ -67,6 +67,11 @@ def aggregate_by_state(df: pd.DataFrame) -> pd.DataFrame:
     if required not in df.columns:
         raise ValueError("DataFrame must contain an 'estado' column with UF codes.")
 
+    # Normalise to uppercase — DataQualityAgent title-cases string columns
+    # ('Mt' → 'MT'), which would break the GeoJSON sigla match.
+    df = df.copy()
+    df["estado"] = df["estado"].astype(str).str.strip().str.upper()
+
     agg: dict[str, Any] = {"n_animais": (df.columns[0], "count")}
     named_aggs: dict[str, Any] = {"n_animais": pd.NamedAgg(column=df.columns[0], aggfunc="count")}
 
